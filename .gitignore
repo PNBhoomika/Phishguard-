@@ -1,0 +1,18 @@
+# Dependencies & Python virtual environments
+vendor/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.whl
+
+# Large dataset archives & raw CSVs (> 50MB)
+data/*.zip
+data/**/*.csv
+
+# IDE & OS temporary files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

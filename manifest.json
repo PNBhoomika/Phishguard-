@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "PhishGuard - Hybrid Phishing Scanner",
+  "version": "1.1.0",
+  "description": "A private, local phishing scanner using Logistic Regression and explainable heuristics.",
+  "action": {
+    "default_title": "Scan this page with PhishGuard",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.svg",
+      "48": "icons/icon48.svg",
+      "128": "icons/icon128.svg"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.svg",
+    "48": "icons/icon48.svg",
+    "128": "icons/icon128.svg"
+  },
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting",
+    "clipboardWrite"
+  ]
+}

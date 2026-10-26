@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"><title>PhishGuard</title></head>
+  <body>
+    <main>
+      <header><div class="mark">PG</div><div><h1>PhishGuard</h1><p>Local hybrid phishing scan</p></div><span class="local">LOCAL</span></header>
+      <label for="urlInput">URL to inspect</label>
+      <div class="input-row"><input id="urlInput" type="url" placeholder="https://example.com" autocomplete="off"><button id="currentTab" title="Use current browser tab">Current</button></div>
+      <button id="scan" class="scan">Scan URL <span>→</span></button>
+      <section id="emptyState" class="empty"><strong>Private by design.</strong><br>ML inference and rule scoring run inside this extension.</section>
+      <section id="result" class="hidden" aria-live="polite">
+        <div class="score-card"><div><span id="riskLevel">Low risk</span><small id="host"></small></div><div id="score" class="score">0<small>/100</small></div></div>
+        <div class="meter"><i id="meterFill"></i></div>
+        <p id="summary" class="summary"></p>
+        <h2>Detection layers</h2>
+        <div class="layers"><div><small>ML probability</small><strong id="mlScore">—</strong></div><div><small>Heuristic score</small><strong id="heuristicScore">—</strong></div></div>
+        <h2>Heuristic evidence</h2><ul id="findings"></ul>
+        <button id="copyReport" class="secondary">Copy report</button>
+      </section>
+      <footer>ML + heuristics v1.0 · A decision-support tool, not a guarantee.</footer>
+    </main>
+    <script src="rules.js"></script><script src="ml/inference.js"></script><script src="hybrid.js"></script><script src="popup.js"></script>
+  </body>
+</html>
