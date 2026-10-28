@@ -50,15 +50,17 @@
 
   function scoreUrl(rawUrl) {
     const findings = [];
+    let hardExtreme = false;
+    let softExtreme = false;
     let url;
     try {
       url = new URL(rawUrl);
     } catch {
-      return { valid: false, score: 0, level: "Invalid", findings: [], error: "Enter a complete URL, for example https://example.com." };
+      return { valid: false, score: 0, level: "Invalid", findings: [], hardExtreme: false, softExtreme: false, extremeConfidence: false, error: "Enter a complete URL, for example https://example.com." };
     }
 
     if (!["http:", "https:"].includes(url.protocol)) {
-      return { valid: false, score: 0, level: "Unsupported", findings: [], error: "Only http and https URLs can be scanned." };
+      return { valid: false, score: 0, level: "Unsupported", findings: [], hardExtreme: false, softExtreme: false, extremeConfidence: false, error: "Only http and https URLs can be scanned." };
     }
 
     const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
@@ -67,8 +69,14 @@
     const pathAndQuery = `${url.pathname}${url.search}`.toLowerCase();
     const completeText = `${hostname}${pathAndQuery}`;
 
-    if (isIpAddress(hostname)) addFinding(findings, 20, "ip-host", "IP address used as the host", "Legitimate public login pages rarely ask users to trust a raw IP address.");
-    if (hostname.includes("xn--")) addFinding(findings, 25, "punycode", "Punycode domain detected", "Punycode can be legitimate, but is often used to imitate brand names.");
+    if (isIpAddress(hostname)) {
+      hardExtreme = true;
+      addFinding(findings, 20, "ip-host", "IP address used as the host", "Legitimate public login pages rarely ask users to trust a raw IP address.");
+    }
+    if (hostname.includes("xn--")) {
+      hardExtreme = true;
+      addFinding(findings, 25, "punycode", "Punycode domain detected", "Punycode can be legitimate, but is often used to imitate brand names.");
+    }
     if (containsMixedScripts(hostname)) addFinding(findings, 25, "mixed-script", "Mixed-script hostname", "Mixed writing systems can make look-alike domain names difficult to spot.");
     if (SUSPICIOUS_TLDS.has(tld)) addFinding(findings, 8, "risky-tld", `Higher-risk TLD: .${tld}`, "This TLD is not proof of phishing, but appears frequently in abuse reports.");
     if (labels.length >= 5) addFinding(findings, 10, "deep-subdomain", "Very deep subdomain chain", `${labels.length - 1} subdomain levels can hide the actual registrable domain.`);
@@ -91,6 +99,7 @@
       for (const brand of BRANDS) {
         const distance = levenshtein(label.replace(/\d/g, "a"), brand);
         if (label !== brand && distance > 0 && distance <= 1) {
+          softExtreme = true;
           addFinding(findings, 30, "typosquat", `Possible ${brand} look-alike`, `The hostname segment “${label}” is ${distance} edit away from “${brand}”.`);
           break;
         }
@@ -98,9 +107,9 @@
       if (findings.some((finding) => finding.id === "typosquat")) break;
     }
 
-    const score = Math.min(100, findings.reduce((total, finding) => total + finding.points, 0));
+    const score = Math.max(0, Math.min(100, findings.reduce((total, finding) => total + finding.points, 0)));
     const level = score >= 75 ? "Critical" : score >= 50 ? "High risk" : score >= 20 ? "Suspicious" : "Low risk";
-    return { valid: true, url: url.href, hostname, score, level, findings, featureSummary: { tld, labels: labels.length, entropy: Number(hostEntropy.toFixed(2)), keywordCount: matchedKeywords.length } };
+    return { valid: true, url: url.href, hostname, score, level, findings, hardExtreme, softExtreme, extremeConfidence: hardExtreme || softExtreme, featureSummary: { tld, labels: labels.length, entropy: Number(hostEntropy.toFixed(2)), keywordCount: matchedKeywords.length } };
   }
 
   root.PhishGuardRules = { scoreUrl, entropy, levenshtein };

@@ -1,15 +1,17 @@
-# PhishGuard: Local Hybrid Phishing Scanner (v1.1.0)
+# PhishGuard: Automatic Local Phishing Scanner (v1.2.0)
 
-A privacy-first, client-side Chrome / Edge extension that evaluates active URLs using a **dual-layer hybrid architecture**: on-device Machine Learning inference combined with deterministic, explainable heuristic rules.
+A privacy-first, client-side Chrome / Edge extension that scans HTTP and HTTPS pages automatically. It evaluates URL features first, then checks page structure while the page continues to load.
 
 ---
 
 ## Key Highlights
 
-- **100% Private & Local**: Zero remote API calls, no external telemetry, and no page DOM or credential scraping. All ML matrix operations and rule checks run inside the browser extension.
-- **Hybrid Fusion Engine**: Combines statistical ML probability (**60% weight**) and explainable heuristics (**40% weight**) into a single, calibrated 0–100 risk score.
+- **Private & Local**: No remote API calls or telemetry. The DOM layer reads form destinations and page structure only; it never reads field values.
+- **Automatic scanning**: Main-frame navigations and single-page URL changes are scanned without opening the extension popup or copying a URL.
+- **Three detection layers**: URL Logistic Regression, explainable URL heuristics, and structural DOM checks run locally.
+- **Risk-adaptive flow**: A raw IP or punycode host triggers an immediate phishing warning. A brand look-alike host does so when URL heuristics reach 40. URL-stage scores from 35–49 get an immediate subtle warning; DOM analysis can upgrade it to phishing, and a warning never downgrades during that navigation.
 - **Explainable Decisions**: Every flagged risk includes auditable evidence cards and itemized point contributions that can be exported with one click.
-- **Graceful Fallback**: If the ML model is unavailable or fails to initialize, the extension automatically falls back to full heuristic scoring without breaking the user experience.
+- **Graceful Fallback**: If the ML model is unavailable or fails to initialize, the extension automatically falls back to URL heuristic and DOM fusion without breaking the user experience.
 
 ---
 
@@ -17,18 +19,33 @@ A privacy-first, client-side Chrome / Edge extension that evaluates active URLs 
 
 ```mermaid
 flowchart LR
-    A[URL Input / Current Tab] --> B[Feature Extractor]
-    A --> C[Heuristic Engine]
-    B --> D[On-Device ML Engine<br/>Logistic Regression]
-    C --> E[Explainable Rules<br/>10 Indicators]
-    D --> F[Hybrid Fusion Layer<br/>60% ML + 40% Heuristics]
-    E --> F
-    F --> G[Interactive Popup UI<br/>Gauge, Audit Trail & Export]
+    A[Browser navigation / SPA URL change] --> B[URL feature extraction]
+    B --> C[Logistic Regression + URL heuristics]
+    C --> D{Raw IP or punycode host?}
+    D -->|No| D2{Brand look-alike and heuristic >= 40?}
+    D2 -->|No| D3{URL preview 35–49?}
+    D3 -->|Yes| S[Immediate subtle warning]
+    D3 -->|No| E
+    D2 -->|Yes| G[Immediate phishing warning]
+    D -->|Yes| G[Immediate phishing warning]
+    G --> E
+    E --> F{Sensitive structure present?}
+    F -->|Yes| H[DOM structure scan]
+    F -->|No| I[DOM score = 0]
+    H --> J[Calibrated weighted fusion]
+    I --> J
+    J --> K{SAFE / SUSPICIOUS / PHISHING}
+    K -->|SUSPICIOUS| L[Subtle banner]
+    K -->|PHISHING| M[Full warning banner]
+    K -->|SAFE| N[No banner]
+    C --> O[Popup report for the current tab]
+    J --> O
 ```
 
 ### 1. Machine Learning Layer (`ml/inference.js`)
 - **Model**: `StandardScaler` + `LogisticRegression` serialized directly to JSON (`ml/model.json`).
-- **Trained on**: The [PhiUSIIL Phishing URL Dataset](data/phiusiil/PhiUSIIL_Phishing_URL_Dataset.csv) (over 200k+ validated phishing & benign URLs).
+- **Dataset reference**: PhiUSIIL Phishing URL Dataset. The CSV and the training notebook/script are not present in this checkout, so the shipped model cannot currently be reproduced or independently validated from this repository.
+- The current weights include a targeted calibration adjustment: URL path separators and generic terms such as “account” no longer dominate predictions. This is not a retraining run; proper retraining and validation require the missing dataset and training code.
 - **Client-Side Feature Vector (20 features)**:
   1. `url_length`
   2. `hostname_length`
@@ -52,7 +69,7 @@ flowchart LR
   20. `query_parameter_count`
 
 ### 2. Heuristic Rules Engine (`rules.js`)
-Evaluates structural patterns and brand mimicry signals:
+Evaluates URL patterns and brand mimicry signals:
 
 | Signal | Points | Why It Matters |
 |---|---:|---|
@@ -67,13 +84,17 @@ Evaluates structural patterns and brand mimicry signals:
 | **High hostname entropy ($\ge 4.0$)** | 6 | Reveals algorithmically generated domains (DGA) in phishing campaigns. |
 | **Excessive URL length / hyphens** | 5–6 | Supporting obfuscation indicators. |
 
-### 3. Fusion Scoring & Risk Bands
-$$\text{Final Score} = \text{round}(0.60 \times \text{ML Score} + 0.40 \times \text{Heuristic Score})$$
+### 3. DOM Analysis (`content.js`)
+Every page receives a lightweight structure probe. Pages with a password field or a form are fully scanned; an extreme-confidence URL still gets an asynchronous DOM scan after its immediate warning. Checks include password-form destinations, insecure form actions, hidden password fields, and hidden frames containing forms. It does not inspect what a user typed or transmit page data.
 
-- **0 – 19**: **Low risk** (Benign appearance)
-- **20 – 49**: **Suspicious** (Mild or single anomaly detected)
-- **50 – 74**: **High risk** (Multiple correlated risk signals)
-- **75 – 100**: **Critical** (Strong indicators of active credential theft or brand impersonation)
+### 4. Fusion Scoring & Risk Bands
+With the model: `fused = 0.30 × ML + 0.30 × URL heuristics + 0.40 × DOM`. Without it: `fused = 0.50 × URL heuristics + 0.50 × DOM`. Scores are clamped to 0–100. A raw IP or punycode host, or a brand look-alike host with URL heuristic score at least 40, floors the score at 80 and locks PHISHING. DOM score at least 70, or findings `hidden_password_field`, `password_form_cross_origin`, or `password_form_http`, floor the score at 60. `hidden_iframe_with_form` contributes its score without the finding-based floor. At the URL stage, the preview is `0.30 × ML + 0.30 × URL heuristics` when the model is available and URL heuristics alone when it is unavailable; scores from 35–49 show a subtle warning while DOM analysis continues.
+
+- **0 – 34**: **SAFE** (No banner)
+- **35 – 49**: **SUSPICIOUS** (Subtle banner)
+- **50 – 100**: **PHISHING** (Full warning banner)
+
+The URL heuristic and DOM scores are count-based signals, not calibrated probabilities; the fusion weights still need validation against a labeled evaluation set. DOM inspection cannot see password forms rendered only after user interaction or after the 30-second observation window. The warning is dismissible and does not block navigation.
 
 ---
 
@@ -81,12 +102,14 @@ $$\text{Final Score} = \text{round}(0.60 \times \text{ML Score} + 0.40 \times \t
 
 ```text
 phishguard-heuristics-extension/
-├── manifest.json         # Manifest V3 extension configuration
+├── manifest.json         # Manifest V3 extension configuration and permissions
+├── background.js         # Navigation listener and staged scoring coordinator
+├── content.js            # Local DOM structure checks
 ├── popup.html            # Extension popup layout
 ├── popup.css             # Dark-mode styling, gauges, and layouts
 ├── popup.js              # UI controller, event handlers & clipboard exporter
 ├── rules.js              # Deterministic heuristic engine (standalone & exportable)
-├── hybrid.js             # Fusion coordinator linking ML and Rules
+├── hybrid.js             # URL and three-layer fusion scoring
 ├── icons/                # Extension action icons
 ├── ml/
 │   ├── inference.js      # Pure JS feature extractor & logistic inference engine
@@ -110,23 +133,23 @@ phishguard-heuristics-extension/
 5. Pin **PhishGuard** to your browser toolbar.
 
 > [!NOTE]
-> When you make changes to the code, simply click the **Refresh** button on the extension card in `chrome://extensions` and reopen the popup.
+> When you make changes to the code, click **Refresh** on the extension card in `chrome://extensions`. The extension requests access to HTTP and HTTPS pages so it can scan navigations automatically.
 
 ---
 
 ## Safe Testing & Demo Guide
 
-Do **not** visit malicious websites directly. Instead, test URL strings safely using the popup input:
+Do **not** visit malicious websites directly. Navigate to safe sites to exercise automatic scanning. Test suspicious URL strings in the local heuristic rule code rather than opening them in the browser.
 
 1. **Benign URL**:
    - `https://www.example.com/products?id=14`
-   - *Result*: Low risk (Score: ~0–5)
+   - *Result*: Usually SAFE; the final score depends on the URL and DOM signals
 2. **Suspicious IP Endpoint**:
    - `http://192.168.1.55/verify-account`
-   - *Result*: Suspicious / High risk (Triggers raw IP host and credential keyword rules)
+   - *Result*: Test the string with `PhishGuardRules.scoreUrl(...)`; do not navigate to it.
 3. **Severe Brand Impersonation**:
    - `https://paypa1-login-secure.xyz/verify`
-   - *Result*: High risk / Critical (Triggers brand typosquatting, suspicious TLD, and keyword cluster)
+   - *Result*: Test the string with `PhishGuardRules.scoreUrl(...)`; do not navigate to it.
 4. **Export Audit Report**:
    - Click **Copy report** to copy the complete forensic summary to your clipboard.
 
@@ -144,7 +167,9 @@ node tests/rules.test.js
 
 ## Privacy Policy & Permissions
 
-PhishGuard is built from the ground up to respect user privacy:
-- `activeTab` & `tabs`: Used exclusively when the user manually clicks the **Current** button to read the active tab's URL. No background tab tracking or history recording occurs.
+PhishGuard processes browsing data locally:
+- `webNavigation` & `tabs`: Read the URL of a navigated tab so it can be scored automatically and displayed in the popup report.
+- `scripting` and HTTP/HTTPS host access: Run local DOM structure checks and show an in-page warning when the score reaches the threshold.
+- `storage`: Keep the current tab's scan result in session storage for the popup report; results are removed when the tab closes.
 - `clipboardWrite`: Used exclusively when the user clicks **Copy report**.
-- **No Network Requests**: The extension makes zero external HTTP requests; all computation is strictly local.
+- **No Network Requests**: The extension makes no external HTTP requests; all computation is strictly local. It does not read or send form field values.

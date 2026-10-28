@@ -1,4 +1,4 @@
-/* Native JavaScript inference matching the Colab feature extractor exactly. */
+/* Native JavaScript URL feature extraction and logistic-regression inference. */
 (function (root) {
   "use strict";
 
@@ -48,28 +48,42 @@
     return exponent / (1 + exponent);
   }
 
-  async function loadModel() {
-    if (root.PhishGuardModel) return root.PhishGuardModel;
-    const response = await fetch(chrome.runtime.getURL("ml/model.json"));
-    if (!response.ok) throw new Error("Model file could not be loaded.");
-    root.PhishGuardModel = await response.json();
-    return root.PhishGuardModel;
+  let modelLoadPromise = null;
+
+  function loadModel() {
+    if (root.PhishGuardModel) return Promise.resolve(root.PhishGuardModel);
+    if (modelLoadPromise) return modelLoadPromise;
+    modelLoadPromise = (async () => {
+      try {
+        const response = await fetch(chrome.runtime.getURL("ml/model.json"));
+        if (!response.ok) return null;
+        const model = await response.json();
+        const featureCount = model.featureNames?.length;
+        if (!featureCount || model.means?.length !== featureCount || model.scales?.length !== featureCount || model.coefficients?.length !== featureCount) return null;
+        root.PhishGuardModel = model;
+        return model;
+      } catch {
+        return null;
+      }
+    })();
+    return modelLoadPromise;
   }
 
-  async function predict(rawUrl) {
+  function predict(rawUrl) {
     try {
-      const model = await loadModel();
+      const model = root.PhishGuardModel;
+      if (!model) return { available: false, mlAvailable: false, probability: null, score: null, label: "Model unavailable" };
       const values = extractFeatures(rawUrl);
       let logit = model.intercept;
       values.forEach((value, index) => {
         logit += ((value - model.means[index]) / (model.scales[index] || 1)) * model.coefficients[index];
       });
       const probability = sigmoid(logit);
-      return { available: true, probability, score: Math.round(probability * 100), label: probability >= model.threshold ? "Likely phishing" : "Likely legitimate", featureCount: values.length };
-    } catch (error) {
-      return { available: false, probability: null, score: null, label: "Model unavailable", error: error.message };
+      return { available: true, mlAvailable: true, probability, score: Math.round(probability * 100), label: probability >= model.threshold ? "Likely phishing" : "Likely legitimate", featureCount: values.length };
+    } catch {
+      return { available: false, mlAvailable: false, probability: null, score: null, label: "Model unavailable" };
     }
   }
 
-  root.PhishGuardML = { extractFeatures, loadModel, predict };
+  root.PhishGuardML = { extractFeatures, loadModel, preloadModel: loadModel, predict };
 })(globalThis);

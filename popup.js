@@ -1,53 +1,82 @@
-const input = document.querySelector("#urlInput");
-const resultSection = document.querySelector("#result");
 let latestResult = null;
 
-function cssLevel(level) { return level.toLowerCase().replace(" ", "-"); }
+function decisionClass(decision) {
+  return decision === "PHISHING" ? "critical" : decision === "SUSPICIOUS" ? "suspicious" : decision === "SAFE" ? "low-risk" : "pending";
+}
+
+function renderList(selector, items, emptyText) {
+  const list = document.querySelector(selector);
+  list.replaceChildren();
+  if (!items?.length) {
+    const row = document.createElement("li");
+    row.textContent = emptyText;
+    list.append(row);
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement("li");
+    row.textContent = typeof item === "string" ? item : JSON.stringify(item);
+    list.append(row);
+  }
+}
 
 function displayResult(result) {
+  if (!result) return;
   latestResult = result;
   document.querySelector("#emptyState").classList.add("hidden");
-  resultSection.classList.remove("hidden");
+  document.querySelector("#result").classList.remove("hidden");
+
+  const decision = result.decision || "SCANNING";
   const level = document.querySelector("#riskLevel");
-  level.textContent = result.level;
-  level.className = `level ${cssLevel(result.level)}`;
-  document.querySelector("#score").innerHTML = `${result.score}<small>/100</small>`;
-  document.querySelector("#meterFill").style.width = `${result.score}%`;
-  document.querySelector("#meterFill").className = cssLevel(result.level);
-  document.querySelector("#host").textContent = result.valid ? result.hostname : "No analysis available";
-  document.querySelector("#summary").textContent = result.valid
-    ? result.ml.available ? `Combined score: 60% ML probability and 40% heuristic risk.` : "ML model could not load; showing heuristic score only."
-    : result.error;
-  document.querySelector("#mlScore").textContent = result.ml.available ? `${result.ml.score}%` : "Unavailable";
-  document.querySelector("#heuristicScore").textContent = result.valid ? `${result.heuristic.score}/100` : "—";
+  level.textContent = decision;
+  level.className = `level ${decisionClass(decision)}`;
+  document.querySelector("#score").innerHTML = `${Number.isFinite(result.fused) ? result.fused : "—"}<small>/100</small>`;
+  document.querySelector("#meterFill").style.width = `${Number.isFinite(result.fused) ? result.fused : 0}%`;
+  document.querySelector("#meterFill").className = decisionClass(decision);
+  document.querySelector("#host").textContent = result.url || "Current tab";
+  document.querySelector("#summary").textContent = result.status === "complete"
+    ? `Scan complete · Updated ${new Date(result.timestamps?.updatedAt || Date.now()).toLocaleTimeString()}`
+    : result.extremeBlock ? "Extreme-confidence URL signal: warning shown while the DOM report completes."
+      : "URL checked; waiting for page structure analysis. The page remains usable while the scan runs.";
+  document.querySelector("#mlScore").textContent = result.mlAvailable && Number.isFinite(result.mlScore) ? `${Math.round(result.mlScore)}/100` : "Unavailable";
+  document.querySelector("#heuristicScore").textContent = Number.isFinite(result.urlHeurScore) ? `${result.urlHeurScore}/100` : "—";
+  document.querySelector("#domScore").textContent = Number.isFinite(result.domScore) ? `${result.domScore}/100` : "Pending";
+  document.querySelector("#modelStatus").textContent = result.mlAvailable ? "Model loaded" : "Model unavailable — using heuristic+DOM fusion";
+  document.querySelector("#extremeConfidence").textContent = result.extremeConfidence ? "Yes" : "No";
 
-  const findings = document.querySelector("#findings");
-  findings.replaceChildren();
-  for (const finding of result.findings) {
-    const row = document.createElement("li");
-    row.innerHTML = `<b>+${finding.points}</b><span><strong>${finding.title}</strong>${finding.detail}</span>`;
-    findings.append(row);
-  }
-  if (!result.findings.length && result.valid) findings.innerHTML = "<li><span>No heuristic phishing signals were found.</span></li>";
+  renderList("#findings", result.findings, "No findings recorded.");
+  renderList("#appliedRules", result.appliedRules, "No fusion overrides applied.");
 }
 
-async function scan() {
-  const button = document.querySelector("#scan");
-  button.disabled = true;
-  button.textContent = "Analysing…";
-  try { displayResult(await PhishGuardHybrid.analyse(input.value.trim())); }
-  finally { button.disabled = false; button.innerHTML = "Scan URL <span>→</span>"; }
+async function getResult(tabId) {
+  return chrome.runtime.sendMessage({ type: "PHISHGUARD_GET_RESULT", tabId });
 }
 
-document.querySelector("#scan").addEventListener("click", scan);
-input.addEventListener("keydown", (event) => { if (event.key === "Enter") scan(); });
-document.querySelector("#currentTab").addEventListener("click", async () => {
+async function loadActiveTab(rescan = false) {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (tab?.url) { input.value = tab.url; scan(); }
-});
+  if (!tab?.id || !/^https?:/.test(tab.url || "")) {
+    document.querySelector("#scanStatus").textContent = "This page cannot be scanned";
+    return;
+  }
+
+  let result = rescan
+    ? await chrome.runtime.sendMessage({ type: "PHISHGUARD_SCAN_TAB", tabId: tab.id })
+    : await getResult(tab.id);
+  if (!result) result = await chrome.runtime.sendMessage({ type: "PHISHGUARD_SCAN_TAB", tabId: tab.id });
+  displayResult(result);
+
+  for (let attempt = 0; attempt < 10 && result?.status !== "complete"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    result = await getResult(tab.id);
+    if (result) displayResult(result);
+  }
+}
+
+document.querySelector("#scan").addEventListener("click", () => loadActiveTab(true));
 document.querySelector("#copyReport").addEventListener("click", async () => {
-  if (!latestResult?.valid) return;
-  const report = ["PhishGuard hybrid risk report", `URL: ${latestResult.url}`, `Final risk: ${latestResult.level} (${latestResult.score}/100)`, `ML phishing probability: ${latestResult.ml.available ? `${latestResult.ml.score}%` : "unavailable"}`, `Heuristic score: ${latestResult.heuristic.score}/100`, "", ...latestResult.findings.map((item) => `+${item.points}: ${item.title} — ${item.detail}`)].join("\n");
-  await navigator.clipboard.writeText(report);
-  document.querySelector("#copyReport").textContent = "Report copied";
+  if (!latestResult) return;
+  await navigator.clipboard.writeText(JSON.stringify(latestResult, null, 2));
+  document.querySelector("#copyReport").textContent = "JSON report copied";
 });
+
+void loadActiveTab();
