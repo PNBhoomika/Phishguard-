@@ -293,7 +293,7 @@ async function startScan(tabId, url, newNavigation = true, waitForLoad = false, 
 
     await modelReady;
     if (currentScans.get(tabId)?.scanId !== scanId) return;
-    const urlResult = PhishGuardHybrid.analyseUrl(url);
+    const urlResult = await PhishGuardHybrid.analyseUrl(url);
     state.urlResult = urlResult;
     const extremeBlock = Boolean(urlResult.hardExtreme || (urlResult.softExtreme && urlResult.urlHeurScore >= 40));
     const urlFindings = urlResult.urlFindings.map(findingText);

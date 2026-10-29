@@ -56,8 +56,8 @@
     return { fused: clampScore(fused), decision: decisionFor(fused), appliedRules };
   }
 
-  function analyseUrl(rawUrl) {
-    const ml = root.PhishGuardML.predict(rawUrl);
+  async function analyseUrl(rawUrl) {
+    const ml = await root.PhishGuardML.predict(rawUrl);
     const heuristic = root.PhishGuardRules.scoreUrl(rawUrl);
     const mlAvailable = Boolean(ml.available);
     return {
@@ -115,7 +115,7 @@
 
   // Compatibility wrapper for callers that still need a URL-only analysis result.
   async function analyse(rawUrl) {
-    const result = analyseUrl(rawUrl);
+    const result = await analyseUrl(rawUrl);
     const fused = fuse({ ...result, domScore: 0 });
     return { ...result, ...fused, score: fused.fused, level: fused.decision, ml: { available: result.mlAvailable, score: result.mlScore }, heuristic: { score: result.urlHeurScore, findings: result.urlFindings } };
   }
